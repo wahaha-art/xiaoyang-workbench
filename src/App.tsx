@@ -75,6 +75,7 @@ import {
 } from './model'
 
 const MODES: StudyMode[] = ['刷题', '看课', '复盘', '背诵', '模考', '其他']
+const CUSTOM_SUBJECT_COLORS = ['#3d72c7', '#1b9966', '#c44f74', '#d08a27', '#7a63c7', '#168b93']
 const EVENT_TYPES: EventType[] = ['考试', '考试报名', '网申截止', '笔试', '面试', '体检政审', '其他']
 const DEFAULT_JOB_STATUSES = ['收藏', '待投递', '已投递', '笔试', '面试', '体检/政审', '录用', '淘汰', '放弃']
 
@@ -174,10 +175,11 @@ function formatStopwatch(milliseconds: number) {
   return `${hours}:${minutes}:${rest}`
 }
 
-function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+function Modal({ title, children, onClose, wide = false, className = '' }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean; className?: string }) {
+  const modalClassName = ['modal', wide && 'modal-wide', className].filter(Boolean).join(' ')
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+      <section className={modalClassName} role="dialog" aria-modal="true" aria-label={title}>
         <header className="modal-header">
           <h2>{title}</h2>
           <button className="icon-button" onClick={onClose} aria-label="关闭"><X size={19} /></button>
@@ -516,6 +518,27 @@ function StudyView({ state, setState, setToast }: ViewProps) {
 
   const activeSubject = state.subjects.find((subject) => subject.id === state.timer?.subjectId)
 
+  const createSubject = (rawName: string) => {
+    const name = rawName.trim()
+    if (!name) return null
+    const existing = state.subjects.find((subject) => subject.active && subject.parentId !== null && subject.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+    if (existing) {
+      setToast(`已选择“${existing.name}”`)
+      return existing.id
+    }
+    const customCount = state.subjects.filter((subject) => subject.parentId === 'custom').length
+    const subject: Subject = {
+      id: uid(),
+      name,
+      parentId: 'custom',
+      color: CUSTOM_SUBJECT_COLORS[customCount % CUSTOM_SUBJECT_COLORS.length],
+      active: true,
+    }
+    setState((current) => ({ ...current, subjects: [...current.subjects, subject] }))
+    setToast(`已添加科目“${name}”`)
+    return subject.id
+  }
+
   const selectDate = (date: string) => {
     if (!date || date > today) return
     setSelectedDate(date)
@@ -684,16 +707,55 @@ function StudyView({ state, setState, setToast }: ViewProps) {
         <MonthTrend sessions={monthSessions} month={month} />
       </section>
 
-      {startOpen && <Modal title="开始一次学习" onClose={() => setStartOpen(false)}><form className="form-stack" onSubmit={beginTimer}><FormFields subjects={subjects} /><label className="checkbox-line"><input type="checkbox" name="hasQuestions" />本次会记录题量和正确率</label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setStartOpen(false)}>取消</button><button className="primary-button"><Play size={16} />开始计时</button></div></form></Modal>}
-      {finishOpen && state.timer && <Modal title="完成本次学习" onClose={() => setFinishOpen(false)}><form className="form-stack" onSubmit={finishTimer}><div className="finish-summary"><Clock3 size={20} /><span><strong>{formatStopwatch(elapsed)}</strong><small>{activeSubject?.name} · {state.timer.mode}</small></span></div>{state.timer.hasQuestions && <div className="form-grid"><label>总题量<input name="totalQuestions" type="number" min="1" required /></label><label>正确题数<input name="correctQuestions" type="number" min="0" required /></label></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setFinishOpen(false)}>继续学习</button><button className="primary-button"><Check size={16} />保存记录</button></div></form></Modal>}
-      {manualOpen && <Modal title="手动添加学习记录" onClose={() => setManualOpen(false)}><form className="form-stack" onSubmit={addManualSession}><label>日期<input name="date" type="date" defaultValue={selectedDate} max={today} required /></label><FormFields subjects={subjects} /><label>学习时长（分钟）<input name="durationMinutes" type="number" min="1" required /></label><div className="form-grid"><label>总题量（可选）<input name="totalQuestions" type="number" min="1" /></label><label>正确题数（可选）<input name="correctQuestions" type="number" min="0" /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setManualOpen(false)}>取消</button><button className="primary-button">保存</button></div></form></Modal>}
-      {taskOpen && <Modal title="添加学习任务" onClose={() => setTaskOpen(false)}><form className="form-stack" onSubmit={addTask}><label>任务名称<input name="name" placeholder="例如：资料分析 20 题" required /></label><div className="form-grid"><label>日期<input name="date" type="date" defaultValue={selectedDate} required /></label><label>目标时长（可选）<input name="targetMinutes" type="number" min="1" placeholder="分钟" /></label></div><label>关联科目（可选）<select name="subjectId"><option value="">不关联</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label>重复<select name="repeat" defaultValue="none"><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setTaskOpen(false)}>取消</button><button className="primary-button">添加任务</button></div></form></Modal>}
+      {startOpen && <Modal title="开始一次学习" className="study-modal" onClose={() => setStartOpen(false)}><form className="form-stack" onSubmit={beginTimer}><FormFields subjects={subjects} onCreateSubject={createSubject} /><label className="checkbox-line"><input type="checkbox" name="hasQuestions" />本次会记录题量和正确率</label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setStartOpen(false)}>取消</button><button className="primary-button"><Play size={16} />开始计时</button></div></form></Modal>}
+      {finishOpen && state.timer && <Modal title="完成本次学习" className="study-modal" onClose={() => setFinishOpen(false)}><form className="form-stack" onSubmit={finishTimer}><div className="finish-summary"><Clock3 size={20} /><span><strong>{formatStopwatch(elapsed)}</strong><small>{activeSubject?.name} · {state.timer.mode}</small></span></div>{state.timer.hasQuestions && <div className="form-grid"><label>总题量<input name="totalQuestions" type="number" min="1" required /></label><label>正确题数<input name="correctQuestions" type="number" min="0" required /></label></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setFinishOpen(false)}>继续学习</button><button className="primary-button"><Check size={16} />保存记录</button></div></form></Modal>}
+      {manualOpen && <Modal title="手动添加学习记录" className="study-modal" onClose={() => setManualOpen(false)}><form className="form-stack" onSubmit={addManualSession}><label>日期<input name="date" type="date" defaultValue={selectedDate} max={today} required /></label><FormFields subjects={subjects} onCreateSubject={createSubject} /><label>学习时长（分钟）<input name="durationMinutes" type="number" min="1" required /></label><div className="form-grid"><label>总题量（可选）<input name="totalQuestions" type="number" min="1" /></label><label>正确题数（可选）<input name="correctQuestions" type="number" min="0" /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setManualOpen(false)}>取消</button><button className="primary-button">保存</button></div></form></Modal>}
+      {taskOpen && <Modal title="添加学习任务" className="study-modal" onClose={() => setTaskOpen(false)}><form className="form-stack" onSubmit={addTask}><label>任务名称<input name="name" placeholder="例如：资料分析 20 题" required /></label><div className="form-grid"><label>日期<input name="date" type="date" defaultValue={selectedDate} required /></label><label>目标时长（可选）<input name="targetMinutes" type="number" min="1" placeholder="分钟" /></label></div><label>关联科目（可选）<select name="subjectId"><option value="">不关联</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label>重复<select name="repeat" defaultValue="none"><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setTaskOpen(false)}>取消</button><button className="primary-button">添加任务</button></div></form></Modal>}
     </div>
   )
 }
 
-function FormFields({ subjects }: { subjects: Subject[] }) {
-  return <><label>学习科目<select name="subjectId" required defaultValue=""><option value="" disabled>选择科目</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label>学习方式<select name="mode" defaultValue="刷题">{MODES.map((mode) => <option key={mode}>{mode}</option>)}</select></label><label>记录标题（可选）<input name="title" placeholder="例如：增长率题型" /></label></>
+function FormFields({ subjects, onCreateSubject }: { subjects: Subject[]; onCreateSubject: (name: string) => string | null }) {
+  const [subjectId, setSubjectId] = useState('')
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customName, setCustomName] = useState('')
+
+  const chooseSubject = (event: ChangeEvent<HTMLSelectElement>) => {
+    if (event.target.value === '__new__') {
+      setSubjectId('')
+      setCustomOpen(true)
+      return
+    }
+    setSubjectId(event.target.value)
+    setCustomOpen(false)
+  }
+
+  const addCustomSubject = () => {
+    const createdId = onCreateSubject(customName)
+    if (!createdId) return
+    setSubjectId(createdId)
+    setCustomName('')
+    setCustomOpen(false)
+  }
+
+  return <>
+    <div className="subject-field">
+      <label>学习科目
+        <select name="subjectId" required value={subjectId} onChange={chooseSubject}>
+          <option value="" disabled>{customOpen ? '请先添加新科目' : '选择科目'}</option>
+          {subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+          <option value="__new__">＋ 添加自定义科目</option>
+        </select>
+      </label>
+      {customOpen && <div className="subject-create-row">
+        <input value={customName} onChange={(event) => setCustomName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCustomSubject() } }} placeholder="输入新科目名称" maxLength={30} autoFocus aria-label="新科目名称" />
+        <button type="button" className="primary-button" onClick={addCustomSubject} disabled={!customName.trim()}><Plus size={16} />添加</button>
+        <button type="button" className="icon-button bordered" onClick={() => { setCustomOpen(false); setCustomName('') }} aria-label="取消添加科目" title="取消"><X size={17} /></button>
+      </div>}
+    </div>
+    <label>学习方式<select name="mode" defaultValue="刷题">{MODES.map((mode) => <option key={mode}>{mode}</option>)}</select></label>
+    <label>记录标题（可选）<input name="title" placeholder="例如：增长率题型" /></label>
+  </>
 }
 
 function MonthTrend({ sessions, month }: { sessions: StudySession[]; month: string }) {
