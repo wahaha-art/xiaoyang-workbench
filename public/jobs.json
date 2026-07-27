@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-27T06:38:23.358Z",
+  "generatedFor": "2026-07-27",
+  "sourceNote": "今日检查 5 个公开来源，3 个完成；保留 0 条江苏计算机相关机会",
+  "summary": {
+    "date": "2026-07-27",
+    "totalRelevant": 0,
+    "newToday": 0,
+    "deadlineSoon": 0,
+    "needsReview": 0,
+    "headline": "今日暂未发现符合条件且可核验的新机会",
+    "highlights": []
+  },
+  "sources": [
+    {
+      "id": "jshrss-provincial",
+      "name": "江苏省属事业单位招聘",
+      "url": "https://jshrss.jiangsu.gov.cn/col/col93339/index.html",
+      "assumeJiangsu": true,
+      "organizationType": "事业单位",
+      "status": "ok",
+      "checkedAt": "2026-07-27T06:37:50.369Z",
+      "found": 6,
+      "matched": 0,
+      "message": "检查完成，今日未发现符合条件的新机会"
+    },
+    {
+      "id": "jshrss-technical-schools",
+      "name": "江苏公办技工院校招聘",
+      "url": "https://jshrss.jiangsu.gov.cn/col/col93485/index.html",
+      "assumeJiangsu": true,
+      "organizationType": "事业单位",
+      "status": "ok",
+      "checkedAt": "2026-07-27T06:37:51.942Z",
+      "found": 4,
+      "matched": 0,
+      "message": "检查完成，今日未发现符合条件的新机会"
+    },
+    {
+      "id": "ciic",
+      "name": "中智招聘",
+      "url": "https://www.ciiczhaopin.com/index",
+      "status": "ok",
+      "checkedAt": "2026-07-27T06:37:53.238Z",
+      "found": 5,
+      "matched": 0,
+      "message": "检查完成，今日未发现符合条件的新机会"
+    },
+    {
+      "id": "iguopin",
+      "name": "国聘行动",
+      "url": "https://www.iguopin.com/",
+      "dynamic": true,
+      "status": "limited",
+      "checkedAt": "2026-07-27T06:38:04.331Z",
+      "found": 0,
+      "matched": 0,
+      "message": "动态页面未公开可解析列表，保留官网人工入口"
+    },
+    {
+      "id": "sasac",
+      "name": "国务院国资委",
+      "url": "https://www.sasac.gov.cn/",
+      "status": "error",
+      "checkedAt": "2026-07-27T06:38:04.724Z",
+      "found": 0,
+      "matched": 0,
+      "message": "访问失败：fetch failed"
+    }
+  ],
+  "jobs": []
+}
