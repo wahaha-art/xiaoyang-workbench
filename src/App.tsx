@@ -56,6 +56,7 @@ import {
   Job,
   ResourceItem,
   SidebarIconKey,
+  StudyCountdown,
   StudyMode,
   StudySession,
   Subject,
@@ -489,6 +490,11 @@ function StudyView({ state, setState, setToast }: ViewProps) {
   const [finishOpen, setFinishOpen] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
   const [taskOpen, setTaskOpen] = useState(false)
+  const [dayDetailOpen, setDayDetailOpen] = useState(false)
+  const [checkinSettingsOpen, setCheckinSettingsOpen] = useState(false)
+  const [countdownEditor, setCountdownEditor] = useState<StudyCountdown | null | undefined>(undefined)
+  const [timerPreset, setTimerPreset] = useState<'stopwatch' | '25' | '45' | '60' | 'custom'>('stopwatch')
+  const [customTimerMinutes, setCustomTimerMinutes] = useState(30)
   const [selectedSubject, setSelectedSubject] = useState<string>()
   const [selectedDate, setSelectedDate] = useState(() => localDate())
   const elapsed = useClock(state.timer)
@@ -515,8 +521,43 @@ function StudyView({ state, setState, setToast }: ViewProps) {
   const selectedDayTitle = isToday ? '今日' : `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8, 10))}日`
   const selectedWeekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'long' }).format(new Date(`${selectedDate}T12:00:00`))
   const monthLabel = `${Number(month.slice(5))}月${month.slice(0, 4) === today.slice(0, 4) ? '' : ` · ${month.slice(0, 4)}年`}`
+  const checkinMinutes = state.settings.studyCheckinMinutes
+  const calendarYear = Number(month.slice(0, 4))
+  const calendarMonth = Number(month.slice(5))
+  const calendarDays = new Date(calendarYear, calendarMonth, 0).getDate()
+  const calendarBlanks = (new Date(calendarYear, calendarMonth - 1, 1).getDay() + 6) % 7
+  const minutesByDate = useMemo(() => {
+    const values = new Map<string, number>()
+    state.sessions.forEach((session) => values.set(session.date, (values.get(session.date) ?? 0) + session.durationMinutes))
+    return values
+  }, [state.sessions])
+  const monthCheckins = Array.from({ length: calendarDays }, (_, index) => `${month}-${String(index + 1).padStart(2, '0')}`)
+    .filter((date) => date <= today && (minutesByDate.get(date) ?? 0) >= checkinMinutes).length
+  const streakDays = (() => {
+    let count = 0
+    const cursor = new Date(`${today}T12:00:00`)
+    if ((minutesByDate.get(today) ?? 0) < checkinMinutes) cursor.setDate(cursor.getDate() - 1)
+    while ((minutesByDate.get(localDate(cursor)) ?? 0) >= checkinMinutes) {
+      count += 1
+      cursor.setDate(cursor.getDate() - 1)
+    }
+    return count
+  })()
+  const countdowns = [...state.studyCountdowns].sort((a, b) => Number(a.completed) - Number(b.completed) || a.targetDate.localeCompare(b.targetDate))
 
   const activeSubject = state.subjects.find((subject) => subject.id === state.timer?.subjectId)
+  const timerTargetMs = (state.timer?.targetMinutes ?? 0) * 60_000
+  const recordedTimerMs = state.timer?.timerKind === 'countdown' ? Math.min(elapsed, timerTargetMs) : elapsed
+  const timerDisplayMs = state.timer?.timerKind === 'countdown' ? Math.max(0, timerTargetMs - elapsed) : elapsed
+  const timerProgress = state.timer?.timerKind === 'countdown' && timerTargetMs ? Math.min(100, recordedTimerMs / timerTargetMs * 100) : 0
+
+  useEffect(() => {
+    if (!state.timer?.running || state.timer.timerKind !== 'countdown' || !timerTargetMs || elapsed < timerTargetMs) return
+    setState((current) => current.timer?.timerKind === 'countdown'
+      ? { ...current, timer: { ...current.timer, accumulatedMs: timerTargetMs, running: false } }
+      : current)
+    setFinishOpen(true)
+  }, [elapsed, setState, state.timer?.running, state.timer?.timerKind, timerTargetMs])
 
   const createSubject = (rawName: string) => {
     const name = rawName.trim()
@@ -545,10 +586,62 @@ function StudyView({ state, setState, setToast }: ViewProps) {
     setSelectedSubject(undefined)
   }
 
+  const openCalendarDay = (date: string) => {
+    selectDate(date)
+    setDayDetailOpen(true)
+  }
+
+  const moveCalendarMonth = (amount: number) => {
+    const next = new Date(calendarYear, calendarMonth - 1 + amount, 1, 12)
+    const nextMonth = localDate(next).slice(0, 7)
+    if (nextMonth > today.slice(0, 7)) return
+    selectDate(nextMonth === today.slice(0, 7) ? today : `${nextMonth}-01`)
+  }
+
   const moveDate = (amount: number) => {
     const next = new Date(`${selectedDate}T12:00:00`)
     next.setDate(next.getDate() + amount)
     selectDate(localDate(next))
+  }
+
+  const saveCountdown = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const countdown: StudyCountdown = {
+      id: countdownEditor?.id ?? uid(),
+      title: field(data, 'title'),
+      targetDate: field(data, 'targetDate'),
+      color: field(data, 'color') || '#3d72c7',
+      note: field(data, 'note'),
+      completed: countdownEditor?.completed ?? false,
+    }
+    setState((current) => ({
+      ...current,
+      studyCountdowns: countdownEditor
+        ? current.studyCountdowns.map((item) => item.id === countdown.id ? countdown : item)
+        : [...current.studyCountdowns, countdown],
+    }))
+    setCountdownEditor(undefined)
+    setToast(countdownEditor ? '倒计时已更新' : '倒计时已添加')
+  }
+
+  const toggleCountdown = (countdown: StudyCountdown) => setState((current) => ({
+    ...current,
+    studyCountdowns: current.studyCountdowns.map((item) => item.id === countdown.id ? { ...item, completed: !item.completed } : item),
+  }))
+
+  const deleteCountdown = (countdown: StudyCountdown) => {
+    if (!window.confirm(`删除“${countdown.title}”倒计时？`)) return
+    setState((current) => ({ ...current, studyCountdowns: current.studyCountdowns.filter((item) => item.id !== countdown.id) }))
+  }
+
+  const saveCheckinSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const minutes = Math.max(1, Math.min(1440, numberField(data, 'studyCheckinMinutes')))
+    setState((current) => ({ ...current, settings: { ...current.settings, studyCheckinMinutes: minutes } }))
+    setCheckinSettingsOpen(false)
+    setToast(`每日学习满 ${minutes} 分钟自动打卡`)
   }
 
   const pauseOrResume = () => setState((current) => {
@@ -602,9 +695,13 @@ function StudyView({ state, setState, setToast }: ViewProps) {
   const beginTimer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
+    const timerKind = timerPreset === 'stopwatch' ? 'stopwatch' as const : 'countdown' as const
+    const targetMinutes = timerKind === 'countdown' ? (timerPreset === 'custom' ? customTimerMinutes : Number(timerPreset)) : undefined
+    if (timerKind === 'countdown' && (!targetMinutes || targetMinutes < 1)) return setToast('请输入有效的倒计时时长')
     setState((current) => ({ ...current, timer: {
       subjectId: field(data, 'subjectId'), mode: field(data, 'mode') as StudyMode,
       title: field(data, 'title'), hasQuestions: data.get('hasQuestions') === 'on',
+      timerKind, targetMinutes,
       startedAt: Date.now(), accumulatedMs: 0, running: true,
     } }))
     setStartOpen(false)
@@ -617,7 +714,7 @@ function StudyView({ state, setState, setToast }: ViewProps) {
     const totalQuestions = numberField(data, 'totalQuestions') || undefined
     const correctQuestions = numberField(data, 'correctQuestions') || undefined
     if (totalQuestions && (correctQuestions ?? 0) > totalQuestions) return setToast('正确题数不能大于总题数')
-    const currentMs = state.timer.accumulatedMs + (state.timer.running ? Date.now() - state.timer.startedAt : 0)
+    const currentMs = recordedTimerMs
     const endedAt = new Date()
     const startedAt = new Date(endedAt.getTime() - currentMs)
     const session: StudySession = {
@@ -656,13 +753,62 @@ function StudyView({ state, setState, setToast }: ViewProps) {
         <div className="button-row"><button className="secondary-button" onClick={() => setManualOpen(true)}><Pencil size={16} />手动记录</button><button className="primary-button" onClick={() => setStartOpen(true)} disabled={Boolean(state.timer)}><Play size={16} fill="currentColor" />开始计时</button></div>
       </section>
 
+      <section className="panel study-countdown-panel">
+        <div className="section-heading">
+          <div><span className="eyebrow">COUNTDOWN</span><h2>考试倒计时</h2></div>
+          <button className="icon-button bordered" onClick={() => setCountdownEditor(null)} aria-label="添加考试倒计时" title="添加倒计时"><Plus size={18} /></button>
+        </div>
+        {countdowns.length ? <div className="study-countdown-list">{countdowns.map((countdown, index) => {
+          const remaining = daysUntil(countdown.targetDate) ?? 0
+          const expired = remaining < 0 && !countdown.completed
+          return <article className={`study-countdown-card ${index === 0 && !countdown.completed ? 'nearest' : ''} ${countdown.completed ? 'completed' : ''} ${expired ? 'expired' : ''}`} style={{ '--countdown-color': countdown.color } as CSSProperties} key={countdown.id}>
+            <div className="countdown-card-head"><span>{countdown.completed ? '已完成' : expired ? '已结束' : remaining === 0 ? '就是今天' : '距离目标'}</span><div><button className="icon-button" onClick={() => setCountdownEditor(countdown)} aria-label={`编辑${countdown.title}`} title="编辑"><Pencil size={15} /></button><button className="icon-button danger-hover" onClick={() => deleteCountdown(countdown)} aria-label={`删除${countdown.title}`} title="删除"><Trash2 size={15} /></button></div></div>
+            <h3>{countdown.title}</h3>
+            <div className="countdown-number"><strong>{countdown.completed ? '完成' : remaining === 0 ? '今天' : Math.abs(remaining)}</strong>{!countdown.completed && remaining !== 0 && <small>{expired ? '天前' : '天'}</small>}</div>
+            <p>{formatDate(countdown.targetDate)}{countdown.note ? ` · ${countdown.note}` : ''}</p>
+            <button className="countdown-complete" onClick={() => toggleCountdown(countdown)}><CheckCircle2 size={16} />{countdown.completed ? '恢复倒计时' : '标记完成'}</button>
+          </article>
+        })}</div> : <div className="countdown-empty"><span><Bell size={20} /></span><div><strong>还没有考试目标</strong><small>添加日期后，这里会自动显示剩余天数。</small></div><button className="secondary-button" onClick={() => setCountdownEditor(null)}><Plus size={16} />添加倒计时</button></div>}
+      </section>
+
       {state.timer && (
         <section className="focus-timer">
-          <div className="focus-meta"><span className="live-dot" /><span>正在学习</span><StatusBadge tone="accent">{state.timer.mode}</StatusBadge></div>
-          <div className="timer-main"><div><strong>{activeSubject?.name}</strong><small>{state.timer.title || '专注进行中'}</small></div><time>{formatStopwatch(elapsed)}</time></div>
+          <div className="focus-meta"><span className="live-dot" /><span>正在学习</span><StatusBadge tone="accent">{state.timer.mode}</StatusBadge><StatusBadge tone="neutral">{state.timer.timerKind === 'countdown' ? `${state.timer.targetMinutes}分钟倒计时` : '正计时'}</StatusBadge></div>
+          <div className="timer-main"><div><strong>{activeSubject?.name}</strong><small>{state.timer.title || '专注进行中'}</small></div><div className="timer-clock"><small>{state.timer.timerKind === 'countdown' ? '剩余' : '已学习'}</small><time>{formatStopwatch(timerDisplayMs)}</time></div></div>
+          {state.timer.timerKind === 'countdown' && <div className="timer-progress" aria-label={`倒计时完成 ${Math.round(timerProgress)}%`}><span style={{ width: `${timerProgress}%` }} /></div>}
           <div className="timer-actions"><button className="timer-secondary" onClick={discardTimer}><Square size={17} />放弃</button><button className="timer-secondary" onClick={pauseOrResume}>{state.timer.running ? <Pause size={17} /> : <Play size={17} />}{state.timer.running ? '暂停' : '继续'}</button><button className="timer-finish" onClick={() => setFinishOpen(true)}><Check size={17} />结束并记录</button></div>
         </section>
       )}
+
+      <section className="panel study-checkin-panel">
+        <div className="section-heading">
+          <div><span className="eyebrow">CHECK IN</span><h2>学习打卡</h2></div>
+          <button className="icon-button bordered" onClick={() => setCheckinSettingsOpen(true)} aria-label="设置打卡条件" title="设置打卡条件"><Settings size={17} /></button>
+        </div>
+        <div className="checkin-summary">
+          <div><small>连续打卡</small><strong>{streakDays}<em>天</em></strong></div>
+          <div><small>本月打卡</small><strong>{monthCheckins}<em>天</em></strong></div>
+          <div><small>本月累计</small><strong>{monthMinutes >= 60 ? `${Math.floor(monthMinutes / 60)}h${monthMinutes % 60 ? `${monthMinutes % 60}m` : ''}` : `${monthMinutes}m`}</strong></div>
+        </div>
+        <div className="checkin-calendar-toolbar">
+          <button className="icon-button" onClick={() => moveCalendarMonth(-1)} aria-label="上个月"><ChevronLeft size={20} /></button>
+          <strong>{calendarYear}年{calendarMonth}月</strong>
+          <button className="icon-button" onClick={() => moveCalendarMonth(1)} disabled={month >= today.slice(0, 7)} aria-label="下个月"><ChevronRight size={20} /></button>
+        </div>
+        <div className="checkin-weekdays">{['一', '二', '三', '四', '五', '六', '日'].map((day) => <span key={day}>{day}</span>)}</div>
+        <div className="checkin-calendar-grid">
+          {Array.from({ length: calendarBlanks }, (_, index) => <span className="checkin-blank" key={`blank-${index}`} />)}
+          {Array.from({ length: calendarDays }, (_, index) => {
+            const day = index + 1
+            const date = `${month}-${String(day).padStart(2, '0')}`
+            const minutes = minutesByDate.get(date) ?? 0
+            const checked = minutes >= checkinMinutes
+            const intensity = minutes >= checkinMinutes * 2 ? 'strong' : checked ? 'checked' : minutes > 0 ? 'partial' : ''
+            return <button className={`checkin-day ${intensity} ${date === selectedDate ? 'selected' : ''} ${date === today ? 'today' : ''}`} key={date} onClick={() => openCalendarDay(date)} disabled={date > today} aria-label={`${formatDate(date)}，${minutes ? `学习${formatMinutes(minutes)}` : '没有学习记录'}`}><span>{day}</span><small>{minutes ? minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60 || ''}` : ''}</small></button>
+          })}
+        </div>
+        <p className="checkin-rule"><CheckCircle2 size={15} />每天累计学习满 {checkinMinutes} 分钟自动打卡，点击日期查看详情。</p>
+      </section>
 
       <section className="study-date-nav" aria-label="选择要查看的学习日期">
         <button className="icon-button bordered" onClick={() => moveDate(-1)} aria-label="查看前一天"><ChevronLeft size={19} /></button>
@@ -707,12 +853,83 @@ function StudyView({ state, setState, setToast }: ViewProps) {
         <MonthTrend sessions={monthSessions} month={month} />
       </section>
 
-      {startOpen && <Modal title="开始一次学习" className="study-modal" onClose={() => setStartOpen(false)}><form className="form-stack" onSubmit={beginTimer}><FormFields subjects={subjects} onCreateSubject={createSubject} /><label className="checkbox-line"><input type="checkbox" name="hasQuestions" />本次会记录题量和正确率</label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setStartOpen(false)}>取消</button><button className="primary-button"><Play size={16} />开始计时</button></div></form></Modal>}
-      {finishOpen && state.timer && <Modal title="完成本次学习" className="study-modal" onClose={() => setFinishOpen(false)}><form className="form-stack" onSubmit={finishTimer}><div className="finish-summary"><Clock3 size={20} /><span><strong>{formatStopwatch(elapsed)}</strong><small>{activeSubject?.name} · {state.timer.mode}</small></span></div>{state.timer.hasQuestions && <div className="form-grid"><label>总题量<input name="totalQuestions" type="number" min="1" required /></label><label>正确题数<input name="correctQuestions" type="number" min="0" required /></label></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setFinishOpen(false)}>继续学习</button><button className="primary-button"><Check size={16} />保存记录</button></div></form></Modal>}
+      {startOpen && <Modal title="开始一次学习" className="study-modal" onClose={() => setStartOpen(false)}><form className="form-stack" onSubmit={beginTimer}>
+        <div className="timer-preset-field"><span>计时方式</span><div className="timer-preset-grid">
+          <button type="button" className={timerPreset === 'stopwatch' ? 'selected' : ''} onClick={() => setTimerPreset('stopwatch')}>正计时</button>
+          <button type="button" className={timerPreset === '25' ? 'selected' : ''} onClick={() => setTimerPreset('25')}>25分钟</button>
+          <button type="button" className={timerPreset === '45' ? 'selected' : ''} onClick={() => setTimerPreset('45')}>45分钟</button>
+          <button type="button" className={timerPreset === '60' ? 'selected' : ''} onClick={() => setTimerPreset('60')}>60分钟</button>
+          <button type="button" className={timerPreset === 'custom' ? 'selected' : ''} onClick={() => setTimerPreset('custom')}>自定义</button>
+        </div></div>
+        {timerPreset === 'custom' && <label>倒计时时长（分钟）<input type="number" min="1" max="1440" value={customTimerMinutes} onChange={(event) => setCustomTimerMinutes(Number(event.target.value))} required /></label>}
+        <FormFields subjects={subjects} onCreateSubject={createSubject} /><label className="checkbox-line"><input type="checkbox" name="hasQuestions" />本次会记录题量和正确率</label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setStartOpen(false)}>取消</button><button className="primary-button"><Play size={16} />开始计时</button></div></form></Modal>}
+      {finishOpen && state.timer && <Modal title="完成本次学习" className="study-modal" onClose={() => setFinishOpen(false)}><form className="form-stack" onSubmit={finishTimer}><div className="finish-summary"><Clock3 size={20} /><span><strong>{formatStopwatch(recordedTimerMs)}</strong><small>{activeSubject?.name} · {state.timer.mode}</small></span></div>{state.timer.hasQuestions && <div className="form-grid"><label>总题量<input name="totalQuestions" type="number" min="1" required /></label><label>正确题数<input name="correctQuestions" type="number" min="0" required /></label></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setFinishOpen(false)}>继续学习</button><button className="primary-button"><Check size={16} />保存记录</button></div></form></Modal>}
       {manualOpen && <Modal title="手动添加学习记录" className="study-modal" onClose={() => setManualOpen(false)}><form className="form-stack" onSubmit={addManualSession}><label>日期<input name="date" type="date" defaultValue={selectedDate} max={today} required /></label><FormFields subjects={subjects} onCreateSubject={createSubject} /><label>学习时长（分钟）<input name="durationMinutes" type="number" min="1" required /></label><div className="form-grid"><label>总题量（可选）<input name="totalQuestions" type="number" min="1" /></label><label>正确题数（可选）<input name="correctQuestions" type="number" min="0" /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setManualOpen(false)}>取消</button><button className="primary-button">保存</button></div></form></Modal>}
       {taskOpen && <Modal title="添加学习任务" className="study-modal" onClose={() => setTaskOpen(false)}><form className="form-stack" onSubmit={addTask}><label>任务名称<input name="name" placeholder="例如：资料分析 20 题" required /></label><div className="form-grid"><label>日期<input name="date" type="date" defaultValue={selectedDate} required /></label><label>目标时长（可选）<input name="targetMinutes" type="number" min="1" placeholder="分钟" /></label></div><label>关联科目（可选）<select name="subjectId"><option value="">不关联</option>{subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></label><label>重复<select name="repeat" defaultValue="none"><option value="none">不重复</option><option value="daily">每天</option><option value="weekdays">工作日</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setTaskOpen(false)}>取消</button><button className="primary-button">添加任务</button></div></form></Modal>}
+      {countdownEditor !== undefined && <Modal title={countdownEditor ? '编辑考试倒计时' : '添加考试倒计时'} className="study-modal" onClose={() => setCountdownEditor(undefined)}><form className="form-stack" onSubmit={saveCountdown}><label>考试或目标名称<input name="title" defaultValue={countdownEditor?.title} placeholder="例如：国考笔试" maxLength={30} required /></label><label>目标日期<input name="targetDate" type="date" defaultValue={countdownEditor?.targetDate ?? today} required /></label><div className="form-grid"><label>卡片颜色<input name="color" type="color" defaultValue={countdownEditor?.color ?? '#3d72c7'} /></label><label>备注（可选）<input name="note" defaultValue={countdownEditor?.note} placeholder="例如：上午 9:00" maxLength={50} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setCountdownEditor(undefined)}>取消</button><button className="primary-button"><Check size={16} />保存</button></div></form></Modal>}
+      {checkinSettingsOpen && <Modal title="设置学习打卡" className="study-modal" onClose={() => setCheckinSettingsOpen(false)}><form className="form-stack" onSubmit={saveCheckinSettings}><label>每日打卡所需学习时长（分钟）<input name="studyCheckinMinutes" type="number" min="1" max="1440" defaultValue={checkinMinutes} required /></label><div className="setting-preview"><CheckCircle2 size={19} /><span><strong>自动打卡</strong><small>当天全部学习记录累计达到设定时长后自动完成。</small></span></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setCheckinSettingsOpen(false)}>取消</button><button className="primary-button">保存设置</button></div></form></Modal>}
+      {dayDetailOpen && <StudyDayDetail date={selectedDate} sessions={daySessions} tasks={dayTasks} subjects={state.subjects} checkinMinutes={checkinMinutes} onClose={() => setDayDetailOpen(false)} onAddRecord={() => { setDayDetailOpen(false); setManualOpen(true) }} onDeleteSession={(sessionId) => setState((current) => ({ ...current, sessions: current.sessions.filter((item) => item.id !== sessionId) }))} onToggleTask={toggleTask} />}
     </div>
   )
+}
+
+function StudyDayDetail({ date, sessions, tasks, subjects, checkinMinutes, onClose, onAddRecord, onDeleteSession, onToggleTask }: {
+  date: string
+  sessions: StudySession[]
+  tasks: Task[]
+  subjects: Subject[]
+  checkinMinutes: number
+  onClose: () => void
+  onAddRecord: () => void
+  onDeleteSession: (sessionId: string) => void
+  onToggleTask: (task: Task) => void
+}) {
+  const totalMinutes = sessions.reduce((sum, session) => sum + session.durationMinutes, 0)
+  const checked = totalMinutes >= checkinMinutes
+  const questionSessions = sessions.filter((session) => session.totalQuestions)
+  const totalQuestions = questionSessions.reduce((sum, session) => sum + (session.totalQuestions ?? 0), 0)
+  const correctQuestions = questionSessions.reduce((sum, session) => sum + (session.correctQuestions ?? 0), 0)
+  const subjectValues = subjects.map((subject) => ({
+    id: subject.id,
+    name: subject.name,
+    color: subject.color,
+    minutes: sessions.filter((session) => session.subjectId === subject.id).reduce((sum, session) => sum + session.durationMinutes, 0),
+  })).filter((item) => item.minutes > 0).sort((a, b) => b.minutes - a.minutes)
+  const completedTasks = tasks.filter((task) => task.status === 'completed').length
+
+  return <Modal title={`${formatDate(date)}学习详情`} className="study-modal study-day-modal" onClose={onClose} wide>
+    <div className="study-day-detail">
+      <section className={`day-checkin-status ${checked ? 'checked' : totalMinutes ? 'partial' : ''}`}>
+        <span>{checked ? <CheckCircle2 size={28} /> : <Clock3 size={28} />}</span>
+        <div><strong>{checked ? '今日已打卡' : totalMinutes ? `还差 ${Math.max(0, checkinMinutes - totalMinutes)} 分钟` : '今日尚未打卡'}</strong><small>打卡标准：累计学习 {checkinMinutes} 分钟</small></div>
+        <time>{formatMinutes(totalMinutes)}</time>
+      </section>
+      <div className="day-detail-stats">
+        <div><small>学习记录</small><strong>{sessions.length} 条</strong></div>
+        <div><small>任务完成</small><strong>{completedTasks}/{tasks.length}</strong></div>
+        <div><small>做题正确率</small><strong>{totalQuestions ? `${Math.round(correctQuestions / totalQuestions * 100)}%` : '--'}</strong></div>
+      </div>
+      <section className="day-detail-section">
+        <h3>科目分布</h3>
+        {subjectValues.length ? <div className="day-subject-list">{subjectValues.map((item) => <div key={item.id}><span style={{ background: item.color }} /><strong>{item.name}</strong><em>{formatMinutes(item.minutes)} · {Math.round(item.minutes / totalMinutes * 100)}%</em></div>)}</div> : <p className="muted-copy">这一天还没有学习记录。</p>}
+      </section>
+      <section className="day-detail-section">
+        <h3>学习记录</h3>
+        {sessions.length ? <div className="session-list day-session-list">{sessions.map((session) => {
+          const subject = subjects.find((item) => item.id === session.subjectId)
+          return <div className="session-row" key={session.id}><span className="subject-dot" style={{ background: subject?.color }} /><div><strong>{session.title || subject?.name}</strong><small>{subject?.name} · {session.mode}{session.totalQuestions ? ` · ${session.correctQuestions}/${session.totalQuestions}题` : ''}</small></div><time>{formatMinutes(session.durationMinutes)}</time><button className="icon-button danger-hover" onClick={() => { if (window.confirm('删除这条学习记录？')) onDeleteSession(session.id) }} aria-label="删除记录"><Trash2 size={15} /></button></div>
+        })}</div> : <p className="muted-copy">暂无记录，可以补录当天学习。</p>}
+      </section>
+      <section className="day-detail-section">
+        <h3>当日任务</h3>
+        {tasks.length ? <div className="task-list">{tasks.map((task) => {
+          const subject = subjects.find((item) => item.id === task.subjectId)
+          return <div className={`task-row static ${task.status}`} key={task.id}><button className="task-check" onClick={() => onToggleTask(task)} aria-label={task.status === 'completed' ? '取消完成' : '完成任务'}>{task.status === 'completed' && <Check size={15} />}</button><span><strong>{task.name}</strong><small>{subject?.name || '普通待办'}</small></span></div>
+        })}</div> : <p className="muted-copy">这一天没有安排学习任务。</p>}
+      </section>
+      <div className="modal-actions day-detail-actions"><button className="secondary-button" onClick={onClose}>关闭</button><button className="primary-button" onClick={onAddRecord}><Pencil size={16} />补录学习</button></div>
+    </div>
+  </Modal>
 }
 
 function FormFields({ subjects, onCreateSubject }: { subjects: Subject[]; onCreateSubject: (name: string) => string | null }) {
@@ -1183,6 +1400,7 @@ function BackupView({ state, setState, setToast }: ViewProps) {
   const exportCsv = () => {
     const rows: string[][] = [['类型', '日期', '名称', '分类或状态', '时长/杯数', '金额/正确率']]
     state.sessions.forEach((item) => rows.push(['学习', item.date, item.title || state.subjects.find((subject) => subject.id === item.subjectId)?.name || '', item.mode, String(item.durationMinutes), item.totalQuestions ? `${item.correctQuestions}/${item.totalQuestions}` : '']))
+    state.studyCountdowns.forEach((item) => rows.push(['学习倒计时', item.targetDate, item.title, item.completed ? '已完成' : '进行中', '', item.note]))
     state.tasks.forEach((item) => rows.push(['任务', item.date, item.name, item.status, item.targetMinutes ? String(item.targetMinutes) : '', '']))
     state.jobs.forEach((item) => rows.push(['求职', item.deadline || '', `${item.company} ${item.title}`, item.status, item.city, item.officialUrl]))
     state.drinks.forEach((item) => rows.push(['饮品', item.date, state.drinkBrands.find((brand) => brand.id === item.brandId)?.name || '', item.product, String(item.cups), String(item.amount)]))

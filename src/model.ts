@@ -61,9 +61,20 @@ export interface StudyTimer {
   mode: StudyMode
   title: string
   hasQuestions: boolean
+  timerKind: 'stopwatch' | 'countdown'
+  targetMinutes?: number
   startedAt: number
   accumulatedMs: number
   running: boolean
+}
+
+export interface StudyCountdown {
+  id: string
+  title: string
+  targetDate: string
+  color: string
+  note: string
+  completed: boolean
 }
 
 export type TaskStatus = 'pending' | 'completed' | 'missed'
@@ -149,6 +160,7 @@ export interface ResourceItem {
 
 export interface AppSettings {
   drinkLimit: number
+  studyCheckinMinutes: number
   customJobStatuses: string[]
   darkMode: boolean
   navigation: CoreNavigationItem[]
@@ -165,6 +177,7 @@ export interface AppState {
   subjects: Subject[]
   sessions: StudySession[]
   timer: StudyTimer | null
+  studyCountdowns: StudyCountdown[]
   tasks: Task[]
   jobs: Job[]
   drinkBrands: DrinkBrand[]
@@ -242,6 +255,7 @@ export const createDefaultState = (): AppState => ({
   subjects,
   sessions: [],
   timer: null,
+  studyCountdowns: [],
   tasks: [],
   jobs: [],
   drinkBrands,
@@ -249,8 +263,8 @@ export const createDefaultState = (): AppState => ({
   events: [],
   resources: [],
   customModules: [],
-  settings: { drinkLimit: 6, customJobStatuses: [], darkMode: false, navigation: defaultNavigation.map((item) => ({ ...item })) },
-  meta: { version: 2 },
+  settings: { drinkLimit: 6, studyCheckinMinutes: 30, customJobStatuses: [], darkMode: false, navigation: defaultNavigation.map((item) => ({ ...item })) },
+  meta: { version: 3 },
 })
 
 const nextWeekday = (date: Date) => {
@@ -304,11 +318,19 @@ export const normalizeState = (stored?: Partial<AppState>): AppState => {
     order: Number.isFinite(module.order) ? module.order : 60 + index * 10,
     items: Array.isArray(module.items) ? module.items : [],
   })) : []
+  const timer = stored?.timer ? {
+    ...stored.timer,
+    timerKind: stored.timer.timerKind === 'countdown' ? 'countdown' as const : 'stopwatch' as const,
+    targetMinutes: stored.timer.timerKind === 'countdown' && Number(stored.timer.targetMinutes) > 0 ? Number(stored.timer.targetMinutes) : undefined,
+  } : null
+  const studyCheckinMinutes = Number(stored?.settings?.studyCheckinMinutes)
   const normalized: AppState = {
     ...defaults,
     ...stored,
     subjects: Array.isArray(stored?.subjects) ? stored.subjects : defaults.subjects,
     sessions: Array.isArray(stored?.sessions) ? stored.sessions : [],
+    timer,
+    studyCountdowns: Array.isArray(stored?.studyCountdowns) ? stored.studyCountdowns : [],
     tasks: Array.isArray(stored?.tasks) ? stored.tasks : [],
     jobs: Array.isArray(stored?.jobs) ? stored.jobs : [],
     drinkBrands: Array.isArray(stored?.drinkBrands) ? stored.drinkBrands : defaults.drinkBrands,
@@ -316,8 +338,8 @@ export const normalizeState = (stored?: Partial<AppState>): AppState => {
     events: Array.isArray(stored?.events) ? stored.events : [],
     resources: Array.isArray(stored?.resources) ? stored.resources : [],
     customModules,
-    settings: { ...defaults.settings, ...stored?.settings, navigation },
-    meta: { ...defaults.meta, ...stored?.meta, version: 2 },
+    settings: { ...defaults.settings, ...stored?.settings, studyCheckinMinutes: studyCheckinMinutes > 0 ? studyCheckinMinutes : defaults.settings.studyCheckinMinutes, navigation },
+    meta: { ...defaults.meta, ...stored?.meta, version: 3 },
   }
   return normalizeTasks(normalized)
 }
